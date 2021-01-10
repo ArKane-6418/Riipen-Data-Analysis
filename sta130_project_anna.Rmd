@@ -1,0 +1,281 @@
+---
+output:
+  ioslides_presentation: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(dplyr)
+library(lubridate)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+title: "Riipen data analysis"
+author: "Kevin, Brandon, Joshua, Anna(1005198590), TUT0801, Group number 108-1"
+date: April 1st
+output:
+  ioslides_presentation: default
+  beamer_presentation: default
+  widescreen: yes
+---
+
+## Introduction
+
+- Has the rate of requests changed at all since the implementation of the request expiry feature?
+- Has the acceptance rate changed with the addition of the request expiry feature?
+- The data set we worked on was the `requests` data set which includes 2526 observations starting from 12 April 2018 up until 18 March 2019.
+
+
+---
+```{r echo=FALSE, message = FALSE, out.width = "50%"}
+
+requests <- read_csv("data/requests_Mar18_2019.csv")
+educators <- read_csv("data/educatoraccounts.csv")
+employers <- read_csv("data/employeraccounts.csv")
+
+employers <- employers %>% select(Id, Type)
+colnames(employers) <- c("Actor Id", "Type")
+
+requests <- requests %>% mutate(type=ifelse(`Requestable Model`=="course", "professor","employer")) %>% rename(date_created=`Day of Created At`, date_updated=`Day of Updated At`, date_expired=`Day of Expired At`) %>% mutate(date_created=dmy(date_created)) %>% mutate(date_expired=dmy(date_expired)) %>% mutate(date_updated=dmy(date_updated)) %>% filter(!is.na(`Actor Id`))
+
+glimpse(requests)
+```
+
+## General Data Summary
+
+- We created a new data set by filtering out all of the missing observations in the 'requests' dataset.
+-  We mutated a new column ‘Professor’ if the requestable model was ‘course’ and ‘Employer’ if the requestable model was ‘project’. We filtered out 1265 observations that was “a data migration” error on Riipen’s end. 
+
+
+## Data Summary (Question 1)
+
+- Mutated the given dataset to add two new variables: date_created and num_requests
+- We filtered out the migrated data that did not represent real user requests. 
+- We further filtered out questionable data, which includes:
+  - Outlier observations (rare values that would skew our results)
+  - Migrated data
+  
+
+## Statistical Methods
+
+- Question 1
+  - Scatter plot
+    - x = date_created
+    - y =  num_requests
+    - colour = state (either accepted or not accepted (cancelled, pending, expired, rejected))
+  - Boxplot (filtered out observations with 0 requests)
+    - x = state
+    - y = num_requests
+    
+---
+  - One-sided hypothesis test
+    - $H_0$ = $µ_{after}$ - $µ_{before}$ = 0
+    - $H_A$ = $µ_{after}$ - $µ_{before}$ > 0
+      - $µ_{after}$ = the rate of requests after the request expiry feature was implemented
+      - $µ_{before}$ = the rate of requests before the request expiry feature was implemented
+
+---
+
+- Question 2
+  - Two-sided hypothesis test
+  - $H_0$ = proportion_after - proportion_before = 0
+  - $H_A$ = proportion_after - proportion_before $\neq$ 0
+      - proportion_before = the proportion of accepted requests to total number of requests made before the request expiry feature was added
+      - proportion_after = the proportion of requests accepted to total number of requests made after the request expiry feature was added
+
+## Results
+
+```{r include=FALSE}
+requests <- read_csv("data/requests_Mar18_2019.csv")
+educators <- read_csv("data/educatoraccounts.csv")
+employers <- read_csv("data/employeraccounts.csv")
+
+employers <- employers %>% select(Id, Type)
+colnames(employers) <- c("Actor Id", "Type")
+
+## `requestable model == project` means an `employer` is requesting
+## `requestable model == course` means an `employer` is requesting
+## There are some valid requests on August 30, 2018, so to make sure they are not deleted we remove all observations where`actor id` is NA.
+## Filtered out observations with data "2018-04-12" as there were over 250 observations on that that. It is highly unlikely that 250 requests were made it one day. We assume its some sort of data migration
+requests <- requests %>% mutate(type=ifelse(`Requestable Model`=="course", "professor","employer")) %>% rename(date_created=`Day of Created At`, date_updated=`Day of Updated At`, date_expired=`Day of Expired At`) %>% mutate(date_created=dmy(date_created)) %>% mutate(date_expired=dmy(date_expired)) %>% mutate(date_updated=dmy(date_updated)) %>% filter(!is.na(`Actor Id`)) %>%
+  filter(date_created>min(date_created))
+
+main_req <- requests
+
+## data frame that stores the number of requests by week
+requests <- requests %>% group_by(date_created = floor_date(date_created, unit="day")) %>% summarize(num_requests=n()) %>% complete(date_created = seq.Date(min(date_created), max(date_created), by="day")) %>% mutate(num_requests=(ifelse(is.na(num_requests), 0, num_requests)))
+requests
+```
+
+
+```{r echo=FALSE}
+## filtered_requests removes the outlier on "2019-02-28" that had 50 requests.
+filtered_requests <- requests %>% filter(date_created != "2019-02-28") %>% mutate(state=ifelse(date_created<"2018-11-21","before", "after"))
+## dot plots
+ggplot(filtered_requests,aes(x=date_created,y=num_requests,color=state)) + geom_point()
+```
+A scatterplot of the number requests before/after the new feature added
+
+---
+
+```{r echo=FALSE}
+# boxplot
+# filters out the observations with 0 requests
+filtered_requests <- filtered_requests %>% filter(num_requests!= 0)
+ggplot(filtered_requests,aes(x=state,y=num_requests)) + geom_boxplot()
+```
+Boxplot that filters out the observations with 0 requests
+
+---
+
+```{r include=FALSE}
+# date created of chronologically first request
+x_before <- requests %>% filter(date_created < "2018-11-21") %>% summarise(rate=mean(num_requests))
+
+x_after <- requests %>% filter(date_created >= "2018-11-21") %>% summarise(rate=mean(num_requests))
+
+#test statistic
+test_stat <- x_after[1,1] - x_before[1,1]
+
+as.data.frame(test_stat)
+```
+
+
+```{r echo=FALSE}
+set.seed(230)
+repetitions <- 10000
+simulated_stats <- rep(NA, repetitions)
+
+for(i in 1:repetitions){
+  sim <- requests %>% mutate(num_requests=sample(num_requests))
+  x_before <- sim %>% filter(date_created < "2018-11-21") %>%    summarise(rate=mean(num_requests))
+  x_after <- sim %>% filter(date_created >= "2018-11-21") %>% summarise(rate=mean(num_requests))
+  sim_stats <- x_after - x_before
+  simulated_stats[i] = as.numeric(sim_stats)
+}
+sim <- tibble(mean_diff = simulated_stats)
+
+ggplot(sim, aes(x=mean_diff)) +
+  geom_histogram() + geom_vline(xintercept = as.numeric(test_stat), color="red")
+
+# one sided test
+p_value <- sim %>% filter(mean_diff>=test_stat) %>% nrow()/repetitions
+```
+Simulate Test Statistic under null hypothesis(µ_after - µ_before = 0), where µ_before = Average requests (per day) before the new feature was implemented and µ_after = Average requests (per day) after the new feature was implemented.
+
+---
+
+```{r include=FALSE}
+requests_dat <- read_csv("data/requests_Mar18_2019.csv")
+
+## `requestable model == project` means an `employer` is requesting
+## `requestable model == course` means an `employer` is requesting
+## There are some valid requests on August 30, 2018, so to make sure they are not deleted we remove all observations where`actor id` is NA.
+## DID NOT! Filtered out observations with data "2018-04-12" as there were over 250 observations on that that. It is highly unlikely that 250 requests were made it one day. We assume its some sort of data migration
+requests_filtered <- requests_dat %>% mutate(type=ifelse(`Requestable Model`=="course", "professor","employer")) %>% rename(date_created=`Day of Created At`, date_updated=`Day of Updated At`, date_expired=`Day of Expired At`) %>% mutate(date_created=dmy(date_created)) %>% mutate(date_expired=dmy(date_expired)) %>% mutate(date_updated=dmy(date_updated)) %>% filter(!is.na(`Actor Id`))
+
+main_requests <- requests_filtered
+```
+
+
+```{r include=FALSE}
+accepted_before <- main_requests %>% filter(date_created < "2018-11-21" & State == "accepted") %>% summarize(n())
+num_obs_before <- main_requests %>% filter(date_created < "2018-11-21") %>% nrow()
+proportion_before <- accepted_before/num_obs_before
+
+accepted_after <- main_requests %>% filter(date_created >= "2018-11-21" & State == "accepted") %>% summarize(n())
+num_obs_after <- main_requests %>% filter(date_created >= "2018-11-21") %>% nrow()
+proportion_after <- accepted_after/num_obs_after
+
+p_diff <- proportion_after - proportion_before
+
+test_stat <- p_diff
+as.numeric(test_stat)
+```
+
+```{r echo=FALSE}
+set.seed(130)
+repetitions <- 10000
+simulated_stats <- rep(NA, repetitions)
+
+for (i in 1:repetitions)
+{
+  sim <- main_requests %>% mutate(State = sample(State))
+  accepted_after <- sim %>% filter(State=="accepted" & date_created >= "2018-11-21") %>% summarize(n())
+  accepted_before <- sim %>% filter(State=="accepted" & date_created < "2018-11-21") %>% summarize(n())
+  num_obs_after <- sim %>% filter(date_created >= "2018-11-21") %>% nrow()
+  num_obs_before <- sim %>% filter(date_created < "2018-11-21") %>% nrow()
+  p_diff <- (accepted_after/num_obs_after) - (accepted_before/num_obs_before)
+  simulated_stats[i] <- as.numeric(p_diff)
+}
+
+sim <- data_frame(p_diff=simulated_stats)
+
+ggplot(sim, aes(x=p_diff)) + geom_histogram(binwidth=0.01) + labs(x = "Simulated difference in proportion accepted before and after new feature is added") + geom_vline(xintercept = abs(as.numeric(test_stat)), color="red")  
+```
+Simulate Test Statistic under null hypothesis (H0: the request acceptance rate is not influenced by the addition of the “request expiry” feature added on November 21st, 2018).
+A graph of shows simulated difference.
+
+```{r include=FALSE}
+extreme_count <- sim %>% filter(p_diff >= abs(test_stat)) %>% summarise(n())
+as.numeric(extreme_count)
+
+p_value <- as.numeric(extreme_count)/repetitions
+as.numeric(p_value)
+```
+
+---
+
+Present the main results here, in order of importance, related to the questions asked. You might use tables or graphs, or other ways to summarize your results.
+
+## Conclusion
+
+Fist we are looking at 
+
+The problem we are looking at is how the new feature influence the user's behaviour. To figure out this problem, we come up three research questions. First we plot a scatterplot to show the request before and after new feature implemented, a boxplot to show the variance and median of the request before and after new feature implemented, and a Simulate Test Statistic under the null hypothesis(there is no difference of Average requests (per day) before and after the new feature was implemented). From the first two graphs, we can conclude the average request before was 2.45 per day and after was 4.12 per day, this means that the implementation of this feature has increased the rate of requests by 68.1632653%. Moreover, the p-value was 0, we have strong evidence against the hypothesis that there is no difference between the rate of requests (per day) before and after the new feature was implemented is equivalent. Since our p-value was conducted with a one-sided test, we know that the rate of requests after the new feature was implemented has certainly increased.  
+
+---
+
+Second we calculated the test statistic, and find out that the accpetance rate increased by 1.2%, which means the acceptance rate was not changed much by the feature being added. The hypothesis test shows that there is a almost no amount of evidence against the null hypothesis(since a very large p-value 0.726 was observed). Furthermore, because a rate of 1:1 acceptance to non-acceptance rate only changed to a non-acceptance rate of 0.95:1 after the feature was added, we can conclude that the acceptance rate was not changed much by the feature being added. 
+
+---
+
+Third because of our ambigouous results, we further investigate the State variable in requests to compare expiry rates before and after the feature is added. We consider any requests that have a difference of date_updated and date_created larger than 14 days as "would be" expired data(before the new feature implemented). The bar chart we created shows that before 544 requests expired and after 117 requests expired, which means that the new feature helps user get their result quicker than before.
+
+---
+
+To conclude, our study shows that:
+
+-There is a huge difference between the rate of requests(per day) before and after the new feature was umplemented.
+
+- The acceptance rate was not changed much by the feature being added.
+
+- There are less expired requests after the new feature added.
+
+Which we could say this new feature shows that users are happier and less frustrated with quicker response time compared to before and the platform is more efficient & reliable.
+
+
+
+## Issues
+
+- Its possible that the increase in the number of requests is because requests expired quicker leading to multiple requests being made instead of one. 
+- 
+
+
+
+Give your main conclusions here. Follow the order of questions you presented. 
+
+Here you can also mention any additional considerations, concerns, or issues you might have. For example, if the results were unexpected, you can discuss this and perhaps offer possible explanations.
+
+---
+
+
+## Acknowledgements (optional)
+
+If you received any help from someone other than your team members you can acknowledge them. For example:   
+*The authors thank Wei for providing information on additional data resources. The authors would like to thank "TA name" for helpful suggestions and comments that improved the presentation of this poster.*
+
+
+
